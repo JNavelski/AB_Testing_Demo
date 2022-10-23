@@ -10,39 +10,38 @@ Created on Thu Oct 13 16:10:01 2022
 import random
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import os
+
 import matplotlib
+import matplotlib.pyplot as plt
 
-import scipy as sp
-import scipy.linalg
+import scipy.stats as stats
+import statsmodels.stats.power as smp
 
-import sklearn
-# Needed for generating classification, regression and clustering datasets
-import sklearn.datasets as dt
-
+# Setting some printing options to make it easier to visualize
+pd.set_option('max_columns', 10)
+pd.set_option('max_rows', 20)
+pd.set_option('expand_frame_repr', False)
 
 # Define the seed so that results can be reproduced
 seed = 123
-rand_state = 123
 
 # Define the color maps for plots
 color_map = plt.cm.get_cmap('RdYlBu')
 color_map_discrete = matplotlib.colors.LinearSegmentedColormap.from_list("", ["red","cyan","magenta","blue"])
 
-seed = 123
-random.seed(123)
+random.seed(seed)
 print(random.random())
 
 rand = np.random.RandomState(seed)    
 
-dist_list = ['uniform','normal','exponential','lognormal','chisquare','beta']
-param_list = ['-1,1','0,1','1','0,1','2','0.5,0.9']
+# Example List of Distributions
+dist_list = ['normal','normal','normal','normal','normal','normal']
+param_list = ['0,1','.1,1','.2,1','.3,1','.5,1','.75,1']
 colors_list = ['green','blue','yellow','cyan','magenta','pink']
-
 fig,ax = plt.subplots(nrows=2, ncols=3,figsize=(12,7))
 plt_ind_list = np.arange(6)+231
 
+# Run all at once
 for dist, plt_ind, param, colors in zip(dist_list, plt_ind_list, param_list, colors_list):
     x = eval('rand.'+dist+'('+param+',5000)') 
     
@@ -54,172 +53,102 @@ fig.subplots_adjust(hspace=0.4,wspace=.3)
 plt.suptitle('Sampling from Various Distributions',fontsize=20)
 plt.show()
 
-map_colors = plt.cm.get_cmap('RdYlBu')
-fig,ax = plt.subplots(nrows=2, ncols=3,figsize=(16,7))
-plt_ind_list = np.arange(6)+231
+########################################################################
+# A/B Testing Exercise Start
+########################################################################
 
-for noise,plt_ind in zip([0,0.1,1,10,100,1000],plt_ind_list): 
-    x,y = dt.make_regression(n_samples=1000,
-                             n_features=2,
-                             noise=noise,
-                             random_state=rand_state) 
+# Set Some Parameters
+n = 5000
+location = [0,.1,.2,.3,.5,.75]
+spread =  [1,1,1,1,1,1]
+
+# A quick Power Analalysis
+power_analysis = smp.TTestIndPower()
+sample_size = power_analysis.solve_power(effect_size=location[1], power=0.8, alpha=0.05)
+sample_size
+
+effect_sizes = np.array(location[1:6])
+sample_sizes = np.array(range(10, 1600))
+
+plt.style.use('seaborn')
+fig = plt.figure()
+ax = fig.add_subplot(1, 1, 1)
+fig = power_analysis.plot_power(
+    dep_var='nobs', nobs=sample_sizes,  
+    effect_size=effect_sizes, alpha=0.05, ax=ax, 
+    title='Power of Independent Samples t-test\n$\\alpha = 0.05$')
+
+plt.show(block=False)
+
+
+# Generating  data from a normal(mu,sigma)
+dist_x = pd.DataFrame(index=range(n))
+for i,j in zip(location, spread):
+    print('norm_('+str(i)+'_'+str(j)+')')
+    x = pd.DataFrame(data=np.random.normal(i,j,n),columns= ['norm_('+str(i)+','+str(j)+')'])
+    dist_x = dist_x.join(x)
+
+# Looking at the data
+bins = np.linspace(-4, 4, 50)
+for i in range(1,len(location)):
+    plt.hist([dist_x.iloc[:,0], dist_x.iloc[:,i]], bins, label=['norm_(0,1)', dist_x.columns[i]])
+    plt.legend(loc='upper right')
+    plt.show()
+
+
+# Running T-tests and building a table of p-values
+r_tbl = pd.DataFrame(index=range(15))
+dist_x.columns[1]
+
+for i in range(1,len(location)):
+    x = pd.DataFrame(index=range(15),columns= [dist_x.columns[i]])
+    full = pd.concat([dist_x.iloc[:,0],dist_x.iloc[:,i]],axis=0)
+    x.iloc[0,0] = stats.normaltest(full)[1] 
+    x.iloc[1,0] = stats.normaltest(dist_x.iloc[:,0])[1]
+    x.iloc[2,0] = stats.normaltest(dist_x.iloc[:,i])[1]
     
-    plt.subplot(plt_ind)
-    my_scatter_plot = plt.scatter(x[:,0],
-                                  x[:,1],
-                                  c=y,
-                                  vmin=min(y),
-                                  vmax=max(y),
-                                  s=35,
-                                  cmap=color_map)
+    # F-test - Exremely Sensitive to non-normality
+    F = np.var(dist_x.iloc[:,0]) / np.var(dist_x.iloc[:,i])
+    df1 = len(dist_x.iloc[:,0]) - 1
+    df2 = len(dist_x.iloc[:,i]) - 1
+    x.iloc[3,0] = stats.f.cdf(F, df1, df2) # F-test
     
-    plt.title('noise: '+str(noise))
-    plt.colorbar(my_scatter_plot)
+    x.iloc[4,0] = stats.levene(dist_x.iloc[:,0], dist_x.iloc[:,i])[1] # More robust equal variance test
+    x.iloc[5,0] = stats.bartlett(dist_x.iloc[:,0], dist_x.iloc[:,i])[1] # Another equal variance test
     
-fig.subplots_adjust(hspace=0.3,wspace=.3)
-plt.suptitle('make_regression() With Different Noise Levels',fontsize=20)
-plt.show()
+    x.iloc[6,0] = stats.ttest_ind(a=dist_x.iloc[:,0], b=dist_x.iloc[:,i], equal_var=True)[1] # Standard Student t-test
+    x.iloc[7,0] = stats.ttest_ind(a=dist_x.iloc[:,0], b=dist_x.iloc[:,i], equal_var=False)[1] # Welch
+    x.iloc[8,0] = stats.wilcoxon(dist_x.iloc[:,0],dist_x.iloc[:,i])[1] # Non-parametric
+    x.iloc[9,0] = np.mean(dist_x.iloc[:,0])
+    x.iloc[10,0] = np.mean(dist_x.iloc[:,i])
+    x.iloc[11,0] = x.iloc[10,0] - x.iloc[9,0]
+    x.iloc[12,0] = power_analysis.solve_power(effect_size= abs(x.iloc[11,0]), power=0.8, alpha=0.05)
+    if len(dist_x.iloc[:,i]) > x.iloc[12,0]:
+        x.iloc[13,0] = True
+    else:
+        x.iloc[13,0] = False
+    x.iloc[14,0] = len(dist_x.iloc[:,i])
+    r_tbl = r_tbl.join(x)
 
-fig = plt.figure(figsize=(18,5))
+r_tbl = r_tbl.astype(float)
+r_tbl = np.round(r_tbl,decimals=3)
 
-x,y = dt.make_friedman1(n_samples=1000,n_features=5,random_state=rand_state)
-ax = fig.add_subplot(131, projection='3d')
-my_scatter_plot = ax.scatter(x[:,0], x[:,1],x[:,2], c=y, cmap=color_map)
-fig.colorbar(my_scatter_plot)
-plt.title('make_friedman1')
+# Adding in Tests as Row Names
+r_tbl.index = ['Norm Test ~ All (Fail to)', 'Norm Test ~ C (Fail to)', 'Norm Test ~ T (Fail to)',
+            'Equal Var F Test (Fail to)', 'Equal Var Levene Test (Fail to)', 'Equal Var Bartlett Test (Fail to)',
+            'Student t-test (Equal V) (Reject)', 'Welch t-test (Unequal V) (Reject)',  'Non-parametric Test (Reject)',
+            'Mean ~ C', 'Mean ~ T', 'Mean(T) - Mean(C)', 'Obs. Needed for .80 Power', 'Did it Pass? (1 = True)', 'n']
 
-x,y = dt.make_friedman2(n_samples=1000,random_state=rand_state)
-ax = fig.add_subplot(132, projection='3d')
-my_scatter_plot = ax.scatter(x[:,0], x[:,1],x[:,2], c=y, cmap=color_map)
-fig.colorbar(my_scatter_plot)
-plt.title('make_friedman2')
-
-x,y = dt.make_friedman3(n_samples=1000,random_state=rand_state)
-ax = fig.add_subplot(133, projection='3d')
-my_scatter_plot = ax.scatter(x[:,0], x[:,1],x[:,2], c=y, cmap=color_map)
-fig.colorbar(my_scatter_plot)
-plt.suptitle('make_friedman?() for Non-Linear Data',fontsize=20)
-plt.title('make_friedman3')
-
-plt.show()
-
-fig,ax = plt.subplots(nrows=1, ncols=3,figsize=(16,5))
-plt_ind_list = np.arange(3)+131
-
-for class_sep,plt_ind in zip([0.1,1,10],plt_ind_list):
-    x,y = dt.make_classification(n_samples=1000,
-                                 n_features=2,
-                                 n_repeated=0,
-                                 class_sep=class_sep,
-                                 n_redundant=0,
-                                 random_state=rand_state)
-    
-    plt.subplot(plt_ind)
-    my_scatter_plot = plt.scatter(x[:,0],
-                                  x[:,1],
-                                  c=y,
-                                  vmin=min(y),
-                                  vmax=max(y),
-                                  s=35,
-                                  cmap=color_map_discrete)
-    plt.title('class_sep: '+str(class_sep))
-
-fig.subplots_adjust(hspace=0.3,wspace=.3)
-plt.suptitle('make_classification() With Different class_sep Values',fontsize=20)
-plt.show()
+print('alpha = 0.05, which implies that if p-value <= .5, then reject the null ')
+print(r_tbl)
 
 
 
 
-import sklearn.datasets as dt
-pd.set_option('display.max_columns', 20)
-
-seed = 123
-random.seed(123)
-
-# Generatng Normal Data for AB Testing
-x1 = np.random.normal(0, 1, 1000)
-x2 = np.random.normal(-1, 1, 1000)
-x3 = np.random.normal(3, 1, 1000)
-x4 = np.random.normal(0, 3, 1000)
-
-# An "interface" to matplotlib.axes.Axes.hist() method
-n, bins, patches = plt.hist(x=x1, bins='auto', color='#0504aa',alpha=0.7, rwidth=0.85)
-plt.grid(axis='y', alpha=0.75)
-plt.xlabel('Value')
-plt.ylabel('Frequency')
-plt.title('My Very Own Histogram')
-plt.text(2, 110, r'$\mu=15, b=3$')
-maxfreq = n.max()
-# Set a clean upper y-axis limit.
-plt.ylim(ymax=np.ceil(maxfreq / 10) * 10 if maxfreq % 10 else maxfreq + 10)
-
-# One-hot encode the data using pandas get_dummies
-features = pd.get_dummies(features)
-
-df = dt.load_iris()
-print(df.feature_names)
-print(df.data)
-
-print(df.target_names)
-print(df.target)
-
-df = pd.DataFrame(data= np.c_[df['target'], df['data']],
-                  columns= ['Species'] + df['feature_names'])
-
-a = np.random.choice([0,1], size=(50,), p=[1/3, 2/3])
-b = np.random.choice([0,2], size=(50,), p=[1/3, 2/3])
-c = np.random.choice([0,3], size=(50,), p=[1/3, 2/3])
-
-df1 = pd.DataFrame(data=np.r_[a,b,c], columns=['type'])
-df = pd.concat([df,df1],axis=1)
-
-features = pd.get_dummies(df['type'])
-features.columns = ['x0','x1','x2','x3']
-df = pd.concat([df,features],axis=1)
-df = df.drop('x0', axis=1)
-
-df.value_counts()
-df.describe()
-
-# Run a Random Forest
-from sklearn.model_selection import train_test_split
-# Split the data into training and testing sets
-train_features, test_features, train_labels, test_labels = train_test_split(df.iloc[:,1:9], df.iloc[:,0], test_size = 0.25, random_state = 42)
-
-print('Training Features Shape:', train_features.shape)
-print('Training Labels Shape:', train_labels.shape)
-print('Testing Features Shape:', test_features.shape)
-print('Testing Labels Shape:', test_labels.shape)
-
-# Saving feature names for later use
-feature_list = list(df.columns[1:9])
-
-# The baseline predictions are the historical averages
-baseline_preds = test_features[:, feature_list.index('average')]
-# Baseline errors, and display average baseline error
-baseline_errors = abs(baseline_preds - test_labels)
-print('Average baseline error: ', round(np.mean(baseline_errors), 2))
 
 
-from sklearn.ensemble import RandomForestRegressor
-# Instantiate model with 1000 decision trees
-rf = RandomForestRegressor(n_estimators = 1000, random_state = 42)
-# Train the model on training data
-rf.fit(train_features, train_labels);
 
-# Use the forest's predict method on the test data
-predictions = rf.predict(test_features)
-# Calculate the absolute errors
-errors = abs(predictions - test_labels)
-# Print out the mean absolute error (mae)
-print('Mean Absolute Error:', round(np.mean(errors), 6), 'degrees.')
 
-# Calculate mean absolute percentage error (MAPE)
-mape = 100 * (errors / test_labels)
-# Calculate and display accuracy
-accuracy = 100 - np.mean(mape)
-print('Accuracy:', round(accuracy, 2), '%.')
 
 
 
