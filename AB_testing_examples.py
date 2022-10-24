@@ -131,7 +131,7 @@ for i in range(1,len(location)):
     r_tbl = r_tbl.join(x)
 
 r_tbl = r_tbl.astype(float)
-r_tbl = np.round(r_tbl,decimals=3)
+r_tbl = np.round(r_tbl,decimals=2)
 
 # Adding in Tests as Row Names
 r_tbl.index = ['Norm Test ~ All (Fail to)', 'Norm Test ~ C (Fail to)', 'Norm Test ~ T (Fail to)',
@@ -139,7 +139,7 @@ r_tbl.index = ['Norm Test ~ All (Fail to)', 'Norm Test ~ C (Fail to)', 'Norm Tes
             'Student t-test (Equal V) (Reject)', 'Welch t-test (Unequal V) (Reject)',  'Non-parametric Test (Reject)',
             'Mean ~ C', 'Mean ~ T', 'Mean(T) - Mean(C)', 'Obs. Needed for .80 Power', 'Did it Pass? (1 = True)', 'n']
 
-print('alpha = 0.05, which implies that if p-value <= .5, then reject the null ')
+print('Alpha = 0.05, which implies that if p-value <= .05, then reject the null ')
 print(r_tbl)
 
 
